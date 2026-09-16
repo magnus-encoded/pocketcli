@@ -130,21 +130,6 @@ def _parse_theme_toml(name, text):
     return t
 
 
-def _hex_to_curses_color(hex_color, color_id):
-    """Register a truecolor value in curses. Returns True on success."""
-    h = hex_color.lstrip("#")
-    if len(h) != 6:
-        return False
-    try:
-        r = int(h[0:2], 16) * 1000 // 255
-        g = int(h[2:4], 16) * 1000 // 255
-        b = int(h[4:6], 16) * 1000 // 255
-        curses.init_color(color_id, r, g, b)
-        return True
-    except Exception:
-        return False
-
-
 def _hex_to_ansi(hex_color):
     """Return the nearest ANSI curses color to a hex value."""
     h = hex_color.lstrip("#")
@@ -166,6 +151,47 @@ def _hex_to_ansi(hex_color):
         dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
         if dist < best_dist:
             best_dist, best = dist, color
+    return best
+
+
+def _xterm256_palette():
+    """RGB values of the standard xterm 256-color palette, indices 16-255.
+
+    16-231 is the 6x6x6 color cube; 232-255 is the grayscale ramp.
+    """
+    levels = (0, 95, 135, 175, 215, 255)
+    pal = {}
+    for r in range(6):
+        for g in range(6):
+            for b in range(6):
+                pal[16 + 36 * r + 6 * g + b] = (levels[r], levels[g], levels[b])
+    for i in range(24):
+        v = 8 + 10 * i
+        pal[232 + i] = (v, v, v)
+    return pal
+
+
+_XTERM256 = _xterm256_palette()
+
+
+def _hex_to_xterm256(hex_color):
+    """Return the nearest *existing* xterm-256 palette index for a hex value.
+
+    This redefines nothing, so unlike curses.init_color() it works on
+    terminals that ignore OSC 4 palette changes for indices >= 16.
+    """
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return curses.COLOR_WHITE
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return curses.COLOR_WHITE
+    best, best_dist = curses.COLOR_WHITE, float("inf")
+    for idx, (cr, cg, cb) in _XTERM256.items():
+        dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+        if dist < best_dist:
+            best_dist, best = dist, idx
     return best
 
 
@@ -929,8 +955,7 @@ class PocketTUI:
 
         curses.start_color()
         curses.use_default_colors()
-        self._truecolor = curses.can_change_color() and curses.COLORS >= 256
-        self._tc_ids    = list(range(16, 25))
+        self._has256 = curses.COLORS >= 256
         self._apply_theme(0)
 
         curses.curs_set(0)
@@ -942,23 +967,22 @@ class PocketTUI:
     # ─────────────────────────────────────────
 
     def _apply_theme(self, idx):
-        t  = self.THEMES[idx]
-        tc = self._truecolor
+        t = self.THEMES[idx]
 
-        def color(hex_val, slot):
-            if tc and hex_val:
-                cid = self._tc_ids[slot]
-                if _hex_to_curses_color(hex_val, cid):
-                    return cid
-            return _hex_to_ansi(hex_val) if hex_val else curses.COLOR_WHITE
+        def color(hex_val):
+            if not hex_val:
+                return curses.COLOR_WHITE
+            if self._has256:
+                return _hex_to_xterm256(hex_val)
+            return _hex_to_ansi(hex_val)
 
-        accent = color(t["accent"],    0)
-        active = color(t["green"],     1)
-        info   = color(t["yellow"],    2)
-        sel_fg = color(t["bright_fg"], 3)
-        error  = color(t["red"],       5)
-        sub    = color(t["fg"],        6)
-        sel_bg = color(t["fg"],        7)
+        accent = color(t["accent"])
+        active = color(t["green"])
+        info   = color(t["yellow"])
+        sel_fg = color(t["bright_fg"])
+        error  = color(t["red"])
+        sub    = color(t["fg"])
+        sel_bg = color(t["fg"])
 
         curses.init_pair(1, accent,             -1)        # accent / title
         curses.init_pair(2, active,             -1)        # active / playing
