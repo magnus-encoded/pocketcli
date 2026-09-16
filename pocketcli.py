@@ -87,6 +87,27 @@ def save_config(email, token, uuid):
         cfg.write(f)
 
 
+def load_theme_name():
+    cfg = configparser.ConfigParser()
+    if CONFIG_FILE.exists():
+        cfg.read(CONFIG_FILE)
+        return cfg.get("ui", "theme", fallback=None)
+    return None
+
+
+def save_theme_name(name):
+    """Persist the selected theme, leaving other config sections intact."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = configparser.ConfigParser()
+    if CONFIG_FILE.exists():
+        cfg.read(CONFIG_FILE)
+    if not cfg.has_section("ui"):
+        cfg.add_section("ui")
+    cfg.set("ui", "theme", name)
+    with open(CONFIG_FILE, "w") as f:
+        cfg.write(f)
+
+
 # ─────────────────────────────────────────────
 # Theme system
 # ─────────────────────────────────────────────
@@ -952,11 +973,17 @@ class PocketTUI:
         # ── Theme setup ──
         self.THEMES        = _load_themes()
         self.current_theme = 0
+        saved = load_theme_name()
+        if saved:
+            for i, th in enumerate(self.THEMES):
+                if th["name"] == saved:
+                    self.current_theme = i
+                    break
 
         curses.start_color()
         curses.use_default_colors()
         self._has256 = curses.COLORS >= 256
-        self._apply_theme(0)
+        self._apply_theme(self.current_theme)
 
         curses.curs_set(0)
         self.scr.nodelay(True)
@@ -2380,6 +2407,7 @@ class PocketTUI:
             elif key in (curses.KEY_ENTER, 10, 13):
                 self.current_theme = self.theme_cursor
                 self._apply_theme(self.current_theme)
+                save_theme_name(self.THEMES[self.current_theme]["name"])
                 self.show_themes   = False
                 self.status(f"Theme: {self.THEMES[self.current_theme]['name']}")
             return True
